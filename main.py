@@ -7,6 +7,8 @@ import time
 import os
 import string
 import random
+import gzip
+import subprocess
 
 TOKEN = ''
 
@@ -24,7 +26,6 @@ def random_filename(length, ext):
     return ''.join([random.choice(string.ascii_lowercase) for _ in range(length)]) + '.{}'.format(ext)
 
 
-# TODO: Replace with a named tuple
 class File:
     def __init__(self, name, link):
         self.name = name
@@ -74,11 +75,6 @@ class StickerDownloader:
         return f
 
     def get_sticker_set(self, name):
-        """
-        Get a list of File objects.
-        :param name:
-        :return:
-        """
         params = {'name': name}
         res = self._api_request('getStickerSet', params)
         if res is None:
@@ -131,29 +127,100 @@ class StickerDownloader:
 
     @staticmethod
     def convert_file(_input, _output):
-        command = 'dwebp -quiet "{}" -o "{}"'.format(_input, _output)
-        check_output(command, shell=True)
-        return _output
+        if _input.endswith('.webp'):
+            command = 'dwebp -quiet "{}" -o "{}"'.format(_input, _output)
+            check_output(command, shell=True)
+            return _output
+        elif _input.endswith('.tgs'):
+            try:
+                gif_output = _output.replace('.png', '.gif')
+                temp_json = _output.replace('.png', '.json')
 
-    def convert_to_pngs(self, name):
+                with gzip.open(_input, 'rb') as f_in:
+                    with open(temp_json, 'wb') as f_out:
+                        f_out.write(f_in.read())
+
+                try:
+                    subprocess.check_output(
+                        f'lottie_convert.py "{temp_json}" "{gif_output}" --output-format gif',
+                        shell=True
+                    )
+                    os.remove(temp_json)
+                    return gif_output
+                except Exception as gif_err:
+                    print(f"Direct GIF conversion failed, trying frame extraction: {gif_err}")
+
+                    temp_dir = _output.replace('.png', '_frames')
+                    if not os.path.exists(temp_dir):
+                        os.makedirs(temp_dir)
+
+                    subprocess.check_output(
+                        f'lottie_convert.py "{temp_json}" "{temp_dir}/frame_%04d.png" --output-format png',
+                        shell=True
+                    )
+
+                    frames = sorted([f for f in os.listdir(temp_dir) if f.startswith('frame_')])
+                    if len(frames) <= 1:
+                        print(f"Warning: Only {len(frames)} frames extracted for {os.path.basename(_input)}")
+
+                    subprocess.check_output(
+                        # f'magick "{temp_dir}/frame_*.png" -transparent white -dispose background -delay 3 -loop 0 "{gif_output}"',
+                        f'magick -background none -alpha set -dispose background "{temp_dir}/frame_*.png" -loop 0 -delay 3 "{gif_output}"',
+                        shell=True
+                    )
+
+                    os.remove(temp_json)
+                    import shutil
+                    shutil.rmtree(temp_dir)
+
+                    return gif_output
+            except Exception as e:
+                print(f"Error converting TGS to GIF: {e}")
+                return None
+        else:
+            print(f"Unknown file format: {os.path.basename(_input)}")
+            return None
+
+    def convert_to_images(self, name):
         swd = assure_folder_exists(name, root=self.cwd)
         webp_folder = assure_folder_exists('webp', root=swd)
-        png_folder = assure_folder_exists('png', root=swd)
+        output_folder = assure_folder_exists('matrix_stickers', root=swd)
 
-        webp_files = [os.path.join(webp_folder, i) for i in os.listdir(webp_folder)]
-        png_files = []
+        all_files = [os.path.join(webp_folder, i) for i in os.listdir(webp_folder)]
+        converted_files = []
+        skipped_files = 0
 
-        print('Converting stickers to pngs "{}"..'.format(name))
+        print(f'Converting stickers for Matrix "{name}"..')
         start = time.time()
+
         with ThreadPoolExecutor(max_workers=self.THREADS) as executor:
-            futures = [executor.submit(self.convert_file, _input, os.path.join(png_folder, random_filename(6, 'png')))
-                       for _input in webp_files]
+            futures = []
+            for _input in all_files:
+                if _input.endswith('.webp'):
+                    output_path = os.path.join(output_folder, random_filename(6, 'png'))
+                    futures.append(executor.submit(self.convert_file, _input, output_path))
+                elif _input.endswith('.tgs'):
+                    output_path = os.path.join(output_folder, random_filename(6, 'png'))
+                    futures.append(executor.submit(self.convert_file, _input, output_path))
+                else:
+                    skipped_files += 1
+                    print(f"Skipping unknown format: {os.path.basename(_input)}")
+
             for i in as_completed(futures):
-                png_files.append(i.result())
+                try:
+                    result = i.result()
+                    if result:
+                        converted_files.append(result)
+                except Exception as e:
+                    print(f"Error converting file: {e}")
 
         end = time.time()
-        print('Time taken to convert {} stickers - {:.3f}s'.format(len(png_files), end - start))
+        print(f'Time taken to convert {len(converted_files)} stickers - {end-start:.3f}s')
+        if skipped_files > 0:
+            print(f'Skipped {skipped_files} files (unknown formats)')
         print()
+
+        return converted_files
 
 
 if __name__ == "__main__":
@@ -174,4 +241,4 @@ if __name__ == "__main__":
         print('-' * 60)
         _ = downloader.download_sticker_set(_)
         print('-' * 60)
-        downloader.convert_to_pngs(sset)
+        downloader.convert_to_images(sset)
