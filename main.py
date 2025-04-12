@@ -143,6 +143,17 @@ class StickerDownloader:
                         f'lottie_convert.py "{temp_json}" "{gif_output}" --output-format gif',
                         shell=True
                     )
+
+                    temp_gif = gif_output + ".temp.gif"
+                    os.rename(gif_output, temp_gif)
+
+                    # Change the background color to match dark mode chat (darker gray/almost black)
+                    subprocess.check_output(
+                        f'magick "{temp_gif}" -coalesce -background "#101317" -alpha remove "{gif_output}"',
+                        shell=True
+                    )
+
+                    os.remove(temp_gif)
                     os.remove(temp_json)
                     return gif_output
                 except Exception as gif_err:
@@ -161,9 +172,16 @@ class StickerDownloader:
                     if len(frames) <= 1:
                         print(f"Warning: Only {len(frames)} frames extracted for {os.path.basename(_input)}")
 
+                    for frame in frames:
+                        print(f"Processing frame: {frame}")
+                        frame_path = os.path.join(temp_dir, frame)
+                        subprocess.check_output(
+                            f'magick "{frame_path}" -background "#101317" -alpha remove -flatten "{frame_path}"',
+                            shell=True
+                        )
+
                     subprocess.check_output(
-                        # f'magick "{temp_dir}/frame_*.png" -transparent white -dispose background -delay 3 -loop 0 "{gif_output}"',
-                        f'magick -background none -alpha set -dispose background "{temp_dir}/frame_*.png" -loop 0 -delay 3 "{gif_output}"',
+                        f'magick -dispose background "{temp_dir}/frame_*.png" -loop 0 -delay 3 "{gif_output}"',
                         shell=True
                     )
 
