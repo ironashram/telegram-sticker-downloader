@@ -1,4 +1,3 @@
-import requests
 import json
 import urllib.parse
 from subprocess import check_output
@@ -9,8 +8,7 @@ import string
 import random
 import gzip
 import subprocess
-
-TOKEN = ''
+import requests
 
 
 def assure_folder_exists(folder, root):
@@ -224,8 +222,17 @@ class StickerDownloader:
 
 
 if __name__ == "__main__":
-    downloader = StickerDownloader(TOKEN)
     print('Welcome to Telegram Downloader..')
+
+    TOKEN = os.getenv('TG_TOKEN')
+    if TOKEN is None:
+        TOKEN = input("Enter your Telegram Bot Token: ").strip()
+
+    if TOKEN == '':
+        print('Invalid token.')
+        exit()
+
+    downloader = StickerDownloader(TOKEN)
     names = []
     while True:
         name = input("Enter sticker_set url (leave blank to stop): ").strip()
